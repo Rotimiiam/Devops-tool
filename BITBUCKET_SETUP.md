@@ -18,37 +18,15 @@ Configure these in your Bitbucket repository:
   - Debian: `admin`
 - **Secured**: No
 
-### 3. SSH_KEY
-- **Value**: Your private SSH key (base64 encoded)
-- **Secured**: Yes (check the "Secured" checkbox)
+## SSH Key Configuration
 
-## How to Get Your SSH Key
+Since you've already configured SSH keys through Bitbucket's SSH key management:
 
-### If you already have an SSH key pair:
+1. Go to **Repository Settings > SSH keys**
+2. Your SSH key should already be added there
+3. Ensure the corresponding public key is in your EC2 instance's `~/.ssh/authorized_keys`
 
-```bash
-# Encode your private key to base64
-cat ~/.ssh/id_rsa | base64 -w 0
-
-# Copy the output and paste it as the SSH_KEY variable value
-```
-
-### If you need to create a new SSH key:
-
-```bash
-# Generate a new SSH key pair
-ssh-keygen -t rsa -b 4096 -f ~/.ssh/bitbucket_deploy_key -N ""
-
-# Add the public key to your EC2 instance
-ssh-copy-id -i ~/.ssh/bitbucket_deploy_key.pub $EC2_USER@$EC2_HOST
-
-# Or manually add it:
-cat ~/.ssh/bitbucket_deploy_key.pub
-# Copy the output and add it to ~/.ssh/authorized_keys on your EC2
-
-# Encode the private key for Bitbucket
-cat ~/.ssh/bitbucket_deploy_key | base64 -w 0
-```
+The pipeline will automatically use Bitbucket's configured SSH keys via the `atlassian/ssh-run` pipe.
 
 ## EC2 Security Group Configuration
 
@@ -77,10 +55,14 @@ If you want to restrict SSH to Bitbucket only, add these IPs:
 
 ### 2. Verify Variables
 - Go to Repository Settings > Pipelines > Repository variables
-- Ensure all three variables are set:
+- Ensure both variables are set:
   - EC2_HOST
   - EC2_USER
-  - SSH_KEY (should show as secured)
+
+### 3. Verify SSH Keys
+- Go to Repository Settings > SSH keys
+- Ensure your SSH key is configured
+- Verify the public key is in EC2's `~/.ssh/authorized_keys`
 
 ### 3. Test SSH Connection Manually
 
@@ -105,23 +87,23 @@ git push bitbucket main
 
 When you push to the `main` branch:
 
-1. **Setup SSH**: Pipeline decodes SSH_KEY and configures SSH
-2. **Connect to EC2**: SSH into your EC2 instance
-3. **Clone/Pull Code**: Gets latest code from Bitbucket
-4. **Build**: Runs `docker-compose build`
-5. **Deploy**: Runs `docker-compose up -d`
-6. **Health Check**: Verifies services are running
+1. **Connect to EC2**: Uses Bitbucket's SSH pipe with configured SSH keys
+2. **Clone/Pull Code**: Gets latest code from Bitbucket
+3. **Build**: Runs `docker-compose build`
+4. **Deploy**: Runs `docker-compose up -d`
+5. **Health Check**: Verifies services are running
 
 ## Troubleshooting
 
 ### "Permission denied (publickey)"
-- Verify SSH_KEY is correctly base64 encoded
+- Verify SSH key is configured in Repository Settings > SSH keys
 - Ensure public key is in EC2's `~/.ssh/authorized_keys`
 - Check EC2_USER is correct for your AMI
+- Test SSH manually: `ssh $EC2_USER@$EC2_HOST`
 
 ### "Host key verification failed"
-- The pipeline includes `ssh-keyscan` to handle this automatically
-- If issues persist, manually SSH once to add to known_hosts
+- The pipeline uses Bitbucket's ssh-run pipe which handles this automatically
+- If issues persist, check EC2_HOST is correct
 
 ### "docker: command not found"
 - Docker not installed on EC2
@@ -164,8 +146,9 @@ docker-compose logs -f
 
 ## Next Steps
 
-1. Set up the three repository variables in Bitbucket
-2. Ensure EC2 security group is configured
-3. Install Docker and Nginx on EC2 (see NGINX_SETUP.md)
-4. Push to main branch to trigger deployment
-5. Access your app at http://launchpad.crl.to
+1. Set up the two repository variables in Bitbucket (EC2_HOST, EC2_USER)
+2. Verify SSH keys are configured in Repository Settings > SSH keys
+3. Ensure EC2 security group is configured
+4. Install Docker and Nginx on EC2 (see NGINX_SETUP.md)
+5. Push to main branch to trigger deployment
+6. Access your app at http://launchpad.crl.to

@@ -15,12 +15,8 @@ Configure these variables in your Bitbucket repository settings (Repository Sett
 
 1. **EC2_HOST**: Your EC2 instance IP or hostname (e.g., `ec2-xx-xx-xx-xx.compute.amazonaws.com`)
 2. **EC2_USER**: SSH user for EC2 (usually `ubuntu` or `ec2-user`)
-3. **SSH_KEY**: Your private SSH key (base64 encoded)
 
-To encode your SSH key:
-```bash
-cat ~/.ssh/id_rsa | base64 -w 0
-```
+The pipeline uses Bitbucket's built-in SSH key management (Repository Settings > SSH keys).
 
 ## Installation Steps
 
