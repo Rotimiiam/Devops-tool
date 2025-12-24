@@ -46,7 +46,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - FLASK_ENV=${FLASK_ENV:-production}
     ports:
-      - "5000:5000"
+      - "5080:5000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backend:/app
@@ -63,7 +63,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "5080:80"
+      - "8080:80"
     environment:
       - REACT_APP_API_URL=${REACT_APP_API_URL:-http://launchpad.crl.to/api}
     depends_on:

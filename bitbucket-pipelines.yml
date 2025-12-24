@@ -94,6 +94,14 @@ pipelines:
                 MODE: 'command'
                 COMMAND: 'cd /home/$EC2_USER/devops-tool && docker compose down || true && echo "Containers stopped (volumes preserved)"'
             
+            # Check and free up port 5080 if needed
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'echo "Checking for processes on port 5080..." && sudo lsof -ti:5080 | xargs -r sudo kill -9 || true && echo "Port 5080 cleared"'
+            
             # Build and start services
             - pipe: atlassian/ssh-run:0.4.1
               variables:
