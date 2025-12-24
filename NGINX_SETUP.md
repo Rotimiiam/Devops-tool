@@ -44,7 +44,7 @@ ssh $EC2_USER@$EC2_HOST
 sudo mv /tmp/nginx-proxy.conf /etc/nginx/sites-available/launchpad.crl.to
 
 # Create symbolic link to enable the site
-sudo ln -s /etc/nginx/sites-available/launchpad.crl.to /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/launchpad /etc/nginx/sites-enabled/
 
 # Remove default site if needed
 sudo rm /etc/nginx/sites-enabled/default

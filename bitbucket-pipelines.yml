@@ -41,6 +41,14 @@ pipelines:
                     git pull origin main
                   fi
                   
+                  # Check if docker-compose is installed
+                  if ! command -v docker-compose &> /dev/null; then
+                    echo "ERROR: docker-compose is not installed!"
+                    echo "Please install Docker and Docker Compose on your EC2 instance."
+                    echo "See NGINX_SETUP.md for installation instructions."
+                    exit 1
+                  fi
+                  
                   # Stop existing containers
                   echo "Stopping existing containers..."
                   docker-compose down || true
@@ -62,8 +70,8 @@ pipelines:
                   echo "Recent logs:"
                   docker-compose logs --tail=50
                   
-                  echo "✓ Deployment completed successfully!"
-                  echo "✓ Application running on port 5080"
+                  echo "Deployment completed successfully!"
+                  echo "Application running on port 5080"
             
             - echo "Deployment to EC2 completed!"
 
