@@ -92,7 +92,7 @@ pipelines:
                 SSH_USER: '$EC2_USER'
                 SERVER: '$EC2_HOST'
                 MODE: 'command'
-                COMMAND: 'cd /home/$EC2_USER/devops-tool && docker-compose down || true && echo "Containers stopped (volumes preserved)"'
+                COMMAND: 'cd /home/$EC2_USER/devops-tool && docker compose down || true && echo "Containers stopped (volumes preserved)"'
             
             # Build and start services
             - pipe: atlassian/ssh-run:0.4.1
@@ -100,7 +100,7 @@ pipelines:
                 SSH_USER: '$EC2_USER'
                 SERVER: '$EC2_HOST'
                 MODE: 'command'
-                COMMAND: 'cd /home/$EC2_USER/devops-tool && docker-compose build && docker-compose up -d'
+                COMMAND: 'cd /home/$EC2_USER/devops-tool && docker compose build && docker compose up -d'
             
             # Wait and health check
             - pipe: atlassian/ssh-run:0.4.1
@@ -108,7 +108,7 @@ pipelines:
                 SSH_USER: '$EC2_USER'
                 SERVER: '$EC2_HOST'
                 MODE: 'command'
-                COMMAND: 'cd /home/$EC2_USER/devops-tool && sleep 30 && docker-compose ps && docker-compose logs --tail=50 && echo "✅ Deployment complete!" && echo "Application: http://launchpad.crl.to"'
+                COMMAND: 'cd /home/$EC2_USER/devops-tool && sleep 30 && docker compose ps && docker compose logs --tail=50 && echo "✅ Deployment complete!" && echo "Application: http://launchpad.crl.to"'
 
   default:
     - step:
@@ -119,7 +119,7 @@ pipelines:
           - docker
         script:
           - echo "Testing Docker build..."
-          - docker-compose build
+          - docker compose build
           - echo "✓ Build successful!"
 
   pull-requests:
@@ -130,5 +130,5 @@ pipelines:
             - docker
           script:
             - echo "Testing Docker build..."
-            - docker-compose build
+            - docker compose build
             - echo "✓ Build successful!"
