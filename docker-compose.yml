@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-devops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops}
+      POSTGRES_DB: ${POSTGRES_DB:-devops_tool}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-devops}:${POSTGRES_PASSWORD:-devops}@db:5432/${POSTGRES_DB:-devops_tool}
+      - BITBUCKET_CLIENT_ID=${BITBUCKET_CLIENT_ID}
+      - BITBUCKET_CLIENT_SECRET=${BITBUCKET_CLIENT_SECRET}
+      - BITBUCKET_CALLBACK_URL=${BITBUCKET_CALLBACK_URL:-http://localhost:5000/api/auth/bitbucket/callback}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-http://localhost:5000/api/auth/github/callback}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ROOT_DOMAIN=${ROOT_DOMAIN:-localhost}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - REDIS_URL=redis://redis:6379/0
+      - FLASK_ENV=${FLASK_ENV:-development}
+    ports:
+      - "5000:5000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:5000
+    depends_on:
+      - backend
+    networks:
+      - devops-network
+
+volumes:
+  postgres_data:
+
+networks:
+  devops-network:
+    driver: bridge
