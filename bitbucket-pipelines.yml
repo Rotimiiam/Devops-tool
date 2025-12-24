@@ -1,0 +1,89 @@
+image: atlassian/default-image:3
+
+definitions:
+  services:
+    docker:
+      memory: 3072
+
+pipelines:
+  default:
+    - step:
+        name: Build and Deploy Application
+        services:
+          - docker
+        caches:
+          - docker
+        script:
+          # Build and start the application on port 5080
+          - echo "Building Docker images..."
+          - docker-compose build
+          
+          # Start the application
+          - echo "Starting application on port 5080..."
+          - docker-compose up -d
+          
+          # Wait for services to be healthy
+          - echo "Waiting for services to start..."
+          - sleep 30
+          
+          # Check if services are running
+          - docker-compose ps
+          
+          # Test if frontend is accessible on port 5080
+          - echo "Testing application accessibility..."
+          - curl -f http://localhost:5080 || exit 1
+          
+          # Show logs for debugging
+          - docker-compose logs --tail=50
+          
+          # Keep the application running (for deployment)
+          - echo "Application successfully launched on port 5080"
+        artifacts:
+          - docker-compose.yml
+
+  branches:
+    main:
+      - step:
+          name: Build, Test and Deploy
+          services:
+            - docker
+          caches:
+            - docker
+          script:
+            # Build all services
+            - echo "Building Docker images..."
+            - docker-compose build
+            
+            # Start services
+            - echo "Starting services..."
+            - docker-compose up -d
+            
+            # Wait for services to be ready
+            - sleep 30
+            
+            # Health checks
+            - echo "Running health checks..."
+            - docker-compose ps
+            - curl -f http://localhost:5080 || exit 1
+            
+            # Show logs
+            - docker-compose logs --tail=100
+            
+            # Success message
+            - echo "✓ Application deployed successfully on port 5080"
+            - echo "✓ Frontend: http://localhost:5080"
+            - echo "✓ Backend API: http://localhost:5080/api"
+          artifacts:
+            - docker-compose.yml
+            - .env.example
+
+  pull-requests:
+    '**':
+      - step:
+          name: Test Build
+          services:
+            - docker
+          script:
+            - echo "Testing Docker build..."
+            - docker-compose build
+            - echo "Build successful!"
