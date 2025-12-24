@@ -20,14 +20,25 @@ pipelines:
                 SERVER: $EC2_HOST
                 COMMAND: |
                   set -e
-                  cd /home/$USER/devops-tool || mkdir -p /home/$USER/devops-tool && cd /home/$USER/devops-tool
                   
-                  # Pull latest code
-                  echo "Pulling latest code from Bitbucket..."
-                  if [ -d ".git" ]; then
-                    git pull origin main
-                  else
+                  # Define project directory
+                  PROJECT_DIR="$HOME/devops-tool"
+                  
+                  # Create directory if it doesn't exist
+                  if [ ! -d "$PROJECT_DIR" ]; then
+                    echo "Creating project directory..."
+                    mkdir -p "$PROJECT_DIR"
+                    cd "$PROJECT_DIR"
+                    
+                    # Clone repository
+                    echo "Cloning repository..."
                     git clone https://rotimio@bitbucket.org/curaceldev/devops-tool.git .
+                  else
+                    echo "Project directory exists, pulling latest changes..."
+                    cd "$PROJECT_DIR"
+                    
+                    # Pull latest code
+                    git pull origin main
                   fi
                   
                   # Stop existing containers
@@ -48,6 +59,7 @@ pipelines:
                   docker-compose ps
                   
                   # Show logs
+                  echo "Recent logs:"
                   docker-compose logs --tail=50
                   
                   echo "✓ Deployment completed successfully!"
