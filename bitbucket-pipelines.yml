@@ -12,68 +12,103 @@ pipelines:
           name: Deploy to EC2
           deployment: production
           script:
-            # Deploy to EC2 using Bitbucket's SSH key
-            - echo "Deploying to EC2 instance..."
+            # Deploy code to server using rsync pipe
+            - pipe: atlassian/rsync-deploy:0.12.0
+              variables:
+                USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                REMOTE_PATH: '/home/$EC2_USER/devops-tool/'
+                LOCAL_PATH: '$BITBUCKET_CLONE_DIR/'
+                EXTRA_ARGS: '-avz --exclude=.git --exclude=node_modules --exclude=__pycache__ --exclude=*.log --exclude=.env --exclude=dist --exclude=.local --exclude=frontend/node_modules --exclude=backend/__pycache__'
+                DELETE_FLAG: 'false'
+                SUDO: 'false'
+            
+            # Create .env file on server from Bitbucket variables
+            - echo "Creating .env file on server..."
             - pipe: atlassian/ssh-run:0.4.1
               variables:
-                SSH_USER: $EC2_USER
-                SERVER: $EC2_HOST
-                COMMAND: |
-                  set -e
-                  
-                  # Define project directory
-                  PROJECT_DIR="$HOME/devops-tool"
-                  
-                  # Create directory if it doesn't exist
-                  if [ ! -d "$PROJECT_DIR" ]; then
-                    echo "Creating project directory..."
-                    mkdir -p "$PROJECT_DIR"
-                    cd "$PROJECT_DIR"
-                    
-                    # Clone repository
-                    echo "Cloning repository..."
-                    git clone https://rotimio@bitbucket.org/curaceldev/devops-tool.git .
-                  else
-                    echo "Project directory exists, pulling latest changes..."
-                    cd "$PROJECT_DIR"
-                    
-                    # Pull latest code
-                    git pull origin main
-                  fi
-                  
-                  # Check if docker-compose is installed
-                  if ! command -v docker-compose &> /dev/null; then
-                    echo "ERROR: docker-compose is not installed!"
-                    echo "Please install Docker and Docker Compose on your EC2 instance."
-                    echo "See NGINX_SETUP.md for installation instructions."
-                    exit 1
-                  fi
-                  
-                  # Stop existing containers
-                  echo "Stopping existing containers..."
-                  docker-compose down || true
-                  
-                  # Build and start services
-                  echo "Building and starting services..."
-                  docker-compose build
-                  docker-compose up -d
-                  
-                  # Wait for services to be ready
-                  echo "Waiting for services to start..."
-                  sleep 30
-                  
-                  # Health check
-                  echo "Running health checks..."
-                  docker-compose ps
-                  
-                  # Show logs
-                  echo "Recent logs:"
-                  docker-compose logs --tail=50
-                  
-                  echo "Deployment completed successfully!"
-                  echo "Application running on port 5080"
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'cd /home/$EC2_USER/devops-tool && rm -f .env && touch .env'
             
-            - echo "Deployment to EC2 completed!"
+            # Add backend environment variables
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'echo "SECRET_KEY=$SECRET_KEY" >> /home/$EC2_USER/devops-tool/.env'
+            
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'echo "FLASK_ENV=production" >> /home/$EC2_USER/devops-tool/.env && echo "FLASK_DEBUG=0" >> /home/$EC2_USER/devops-tool/.env'
+            
+            # Add OAuth credentials
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'echo "BITBUCKET_CLIENT_ID=$BITBUCKET_CLIENT_ID" >> /home/$EC2_USER/devops-tool/.env && echo "BITBUCKET_CLIENT_SECRET=$BITBUCKET_CLIENT_SECRET" >> /home/$EC2_USER/devops-tool/.env && echo "BITBUCKET_CALLBACK_URL=http://launchpad.crl.to/api/auth/bitbucket/callback" >> /home/$EC2_USER/devops-tool/.env'
+            
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'echo "GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID" >> /home/$EC2_USER/devops-tool/.env && echo "GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET" >> /home/$EC2_USER/devops-tool/.env && echo "GITHUB_CALLBACK_URL=http://launchpad.crl.to/api/auth/github/callback" >> /home/$EC2_USER/devops-tool/.env'
+            
+            # Add API keys and domain config
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> /home/$EC2_USER/devops-tool/.env && echo "ROOT_DOMAIN=crl.to" >> /home/$EC2_USER/devops-tool/.env && echo "FRONTEND_URL=http://launchpad.crl.to" >> /home/$EC2_USER/devops-tool/.env && echo "REACT_APP_API_URL=http://launchpad.crl.to/api" >> /home/$EC2_USER/devops-tool/.env'
+            
+            # Add database configuration
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'echo "POSTGRES_USER=devops" >> /home/$EC2_USER/devops-tool/.env && echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> /home/$EC2_USER/devops-tool/.env && echo "POSTGRES_DB=devops_tool" >> /home/$EC2_USER/devops-tool/.env && echo "DATABASE_URL=postgresql://devops:$POSTGRES_PASSWORD@db:5432/devops_tool" >> /home/$EC2_USER/devops-tool/.env && echo "REDIS_URL=redis://redis:6379/0" >> /home/$EC2_USER/devops-tool/.env && chmod 644 /home/$EC2_USER/devops-tool/.env'
+            
+            # Install Docker and Docker Compose if not present
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'if ! command -v docker &> /dev/null; then echo "Installing Docker..."; curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo usermod -aG docker $EC2_USER && sudo systemctl enable docker && sudo systemctl start docker; fi && if ! docker compose version &> /dev/null; then echo "Installing Docker Compose plugin..."; sudo apt-get update && sudo apt-get install -y docker-compose-plugin || sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose && sudo chmod +x /usr/local/bin/docker-compose; fi'
+            
+            # Stop existing containers (preserve volumes)
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'cd /home/$EC2_USER/devops-tool && docker-compose down || true && echo "Containers stopped (volumes preserved)"'
+            
+            # Build and start services
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'cd /home/$EC2_USER/devops-tool && docker-compose build && docker-compose up -d'
+            
+            # Wait and health check
+            - pipe: atlassian/ssh-run:0.4.1
+              variables:
+                SSH_USER: '$EC2_USER'
+                SERVER: '$EC2_HOST'
+                MODE: 'command'
+                COMMAND: 'cd /home/$EC2_USER/devops-tool && sleep 30 && docker-compose ps && docker-compose logs --tail=50 && echo "✅ Deployment complete!" && echo "Application: http://launchpad.crl.to"'
 
   default:
     - step:
