@@ -1,7 +1,10 @@
 from flask import Blueprint, request, jsonify, session
+from datetime import datetime
 from ..models import User, Repository, db
 from ..services.github_service import GitHubService
 from ..services.bitbucket_service import BitbucketService
+from ..services.repository_analyzer import RepositoryAnalyzer
+from ..services.gemini_service import GeminiService
 
 bp = Blueprint('repositories', __name__)
 
@@ -122,8 +125,9 @@ def list_repositories():
     
     repositories = Repository.query.filter_by(user_id=user.id).all()
     
-    return jsonify({
-        'repositories': [{
+    repo_list = []
+    for repo in repositories:
+        repo_data = {
             'id': repo.id,
             'name': repo.name,
             'source': repo.source,
@@ -131,9 +135,13 @@ def list_repositories():
             'bitbucket_url': repo.bitbucket_repo_url,
             'status': repo.status,
             'created_at': repo.created_at.isoformat() if repo.created_at else None,
-            'updated_at': repo.updated_at.isoformat() if repo.updated_at else None
-        } for repo in repositories]
-    }), 200
+            'updated_at': repo.updated_at.isoformat() if repo.updated_at else None,
+            'has_analysis': repo.analysis_timestamp is not None,
+            'analysis_confidence': repo.analysis_confidence if repo.analysis_timestamp else None
+        }
+        repo_list.append(repo_data)
+    
+    return jsonify({'repositories': repo_list}), 200
 
 
 @bp.route('/<int:repo_id>', methods=['GET'])
@@ -147,7 +155,7 @@ def get_repository(repo_id):
     if not repository:
         return jsonify({'error': 'Repository not found'}), 404
     
-    return jsonify({
+    repo_data = {
         'id': repository.id,
         'name': repository.name,
         'source': repository.source,
@@ -156,8 +164,21 @@ def get_repository(repo_id):
         'bitbucket_workspace': repository.bitbucket_workspace,
         'status': repository.status,
         'created_at': repository.created_at.isoformat() if repository.created_at else None,
-        'updated_at': repository.updated_at.isoformat() if repository.updated_at else None
-    }), 200
+        'updated_at': repository.updated_at.isoformat() if repository.updated_at else None,
+    }
+    
+    # Include analysis data if available
+    if repository.analysis_timestamp:
+        repo_data['analysis'] = {
+            'detected_languages': repository.detected_languages,
+            'detected_frameworks': repository.detected_frameworks,
+            'required_env_vars': repository.required_env_vars,
+            'analysis_confidence': repository.analysis_confidence,
+            'analysis_timestamp': repository.analysis_timestamp.isoformat(),
+            'ai_recommendations': repository.ai_recommendations
+        }
+    
+    return jsonify(repo_data), 200
 
 
 @bp.route('/<int:repo_id>', methods=['DELETE'])
@@ -175,3 +196,117 @@ def delete_repository(repo_id):
     db.session.commit()
     
     return jsonify({'message': 'Repository deleted successfully'}), 200
+
+
+@bp.route('/<int:repo_id>/analyze', methods=['POST'])
+def analyze_repository(repo_id):
+    """Trigger comprehensive analysis for a specific repository"""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    repository = Repository.query.filter_by(id=repo_id, user_id=user.id).first()
+    if not repository:
+        return jsonify({'error': 'Repository not found'}), 404
+    
+    # Determine which URL to use for cloning
+    clone_url = repository.source_repo_url
+    access_token = None
+    
+    if repository.source == 'github' and user.github_token:
+        # Convert HTML URL to clone URL if needed
+        if clone_url and 'github.com' in clone_url:
+            if not clone_url.endswith('.git'):
+                clone_url = clone_url.replace('github.com/', 'github.com/') + '.git'
+            if clone_url.startswith('http'):
+                clone_url = clone_url.replace('http://', 'https://')
+        access_token = user.github_token
+    elif repository.source == 'bitbucket' and user.bitbucket_token:
+        # Use Bitbucket clone URL
+        clone_url = repository.bitbucket_repo_url
+        access_token = user.bitbucket_token
+    
+    if not clone_url:
+        return jsonify({'error': 'Repository URL not available'}), 400
+    
+    try:
+        # Initialize analyzer
+        analyzer = RepositoryAnalyzer(clone_url, access_token)
+        
+        # Perform analysis
+        analysis_results = analyzer.analyze()
+        
+        # Generate AI recommendations if Gemini API key is available
+        ai_recommendations = None
+        if user.gemini_api_key:
+            try:
+                gemini_service = GeminiService(user.gemini_api_key)
+                ai_recommendations = analyzer.generate_ai_recommendations(
+                    analysis_results, gemini_service
+                )
+            except Exception as e:
+                # Continue without AI recommendations if Gemini fails
+                print(f"Warning: AI recommendations generation failed: {str(e)}")
+        
+        # Update repository with analysis results
+        repository.detected_languages = analysis_results.get('detected_languages')
+        repository.detected_frameworks = analysis_results.get('detected_frameworks')
+        repository.required_env_vars = analysis_results.get('required_env_vars')
+        repository.analysis_confidence = analysis_results.get('analysis_confidence')
+        repository.analysis_timestamp = datetime.utcnow()
+        repository.ai_recommendations = ai_recommendations
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Repository analysis completed successfully',
+            'analysis': {
+                'detected_languages': repository.detected_languages,
+                'detected_frameworks': repository.detected_frameworks,
+                'required_env_vars': repository.required_env_vars,
+                'analysis_confidence': repository.analysis_confidence,
+                'analysis_timestamp': repository.analysis_timestamp.isoformat() if repository.analysis_timestamp else None,
+                'ai_recommendations': repository.ai_recommendations,
+                'file_count': analysis_results.get('file_count'),
+                'total_size': analysis_results.get('total_size')
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': 'Repository analysis failed',
+            'details': str(e)
+        }), 500
+
+
+@bp.route('/<int:repo_id>/analysis', methods=['GET'])
+def get_repository_analysis(repo_id):
+    """Retrieve stored analysis results for a specific repository"""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    repository = Repository.query.filter_by(id=repo_id, user_id=user.id).first()
+    if not repository:
+        return jsonify({'error': 'Repository not found'}), 404
+    
+    # Check if analysis has been performed
+    if not repository.analysis_timestamp:
+        return jsonify({
+            'message': 'No analysis available for this repository',
+            'analysis_performed': False
+        }), 200
+    
+    return jsonify({
+        'analysis_performed': True,
+        'analysis': {
+            'detected_languages': repository.detected_languages,
+            'detected_frameworks': repository.detected_frameworks,
+            'required_env_vars': repository.required_env_vars,
+            'analysis_confidence': repository.analysis_confidence,
+            'analysis_timestamp': repository.analysis_timestamp.isoformat() if repository.analysis_timestamp else None,
+            'ai_recommendations': repository.ai_recommendations
+        }
+    }), 200
+

@@ -2,11 +2,13 @@ from flask import Flask
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
+from flask_socketio import SocketIO
 from .config import config
 import os
 
 db = SQLAlchemy()
 migrate = Migrate()
+socketio = SocketIO()
 
 
 def create_app(config_name=None):
@@ -21,6 +23,7 @@ def create_app(config_name=None):
     db.init_app(app)
     migrate.init_app(app, db)
     CORS(app, origins=[app.config['FRONTEND_URL']], supports_credentials=True)
+    socketio.init_app(app, cors_allowed_origins=app.config['FRONTEND_URL'])
     
     # Register blueprints
     from .routes import auth, repositories, pipelines, domains, settings
@@ -29,6 +32,9 @@ def create_app(config_name=None):
     app.register_blueprint(pipelines.bp, url_prefix='/api/pipelines')
     app.register_blueprint(domains.bp, url_prefix='/api/domains')
     app.register_blueprint(settings.bp, url_prefix='/api/settings')
+    
+    # Register WebSocket handlers
+    from . import websocket_handlers
     
     # Health check endpoint
     @app.route('/health')
