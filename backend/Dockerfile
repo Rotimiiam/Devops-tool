@@ -6,6 +6,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     git \
     build-essential \
+    curl \
+    postgresql-client \
+    redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
@@ -17,8 +20,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Make entrypoint script executable
+RUN chmod +x entrypoint.sh
+
 # Expose port
 EXPOSE 5000
 
-# Run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "120", "app.main:app"]
+# Run the application with entrypoint script
+CMD ["./entrypoint.sh"]

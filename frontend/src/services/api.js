@@ -53,4 +53,27 @@ export const settingsAPI = {
   deleteGeminiKey: () => apiClient.delete('/api/settings/gemini-api-key'),
 };
 
+export const coolifyAPI = {
+  // Health check
+  checkHealth: () => apiClient.get('/api/coolify/health'),
+  
+  // Deployments
+  createDeployment: (data) => apiClient.post('/api/coolify/deployments', data),
+  listDeployments: (params) => apiClient.get('/api/coolify/deployments', { params }),
+  getDeployment: (id) => apiClient.get(`/api/coolify/deployments/${id}`),
+  deleteDeployment: (id) => apiClient.delete(`/api/coolify/deployments/${id}`),
+  
+  // Deployment operations
+  startDeployment: (id) => apiClient.post(`/api/coolify/deployments/${id}/start`),
+  stopDeployment: (id) => apiClient.post(`/api/coolify/deployments/${id}/stop`),
+  
+  // Logs
+  getDeploymentLogs: (id, logType = 'combined') => 
+    apiClient.get(`/api/coolify/deployments/${id}/logs`, { params: { type: logType } }),
+  
+  // Cleanup
+  cleanupOld: (ageHours = 24) => 
+    apiClient.post('/api/coolify/cleanup/old', null, { params: { age_hours: ageHours } }),
+};
+
 export default apiClient;

@@ -74,3 +74,7 @@ TEST*.xml
 # Backup files
 *.backup
 *.bak
+
+# Agent/Tool temporary files
+.agents/
+.implementation_summary.txt

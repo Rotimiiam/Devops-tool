@@ -32,6 +32,11 @@ class Config:
     # Celery
     CELERY_BROKER_URL = REDIS_URL
     CELERY_RESULT_BACKEND = REDIS_URL
+    
+    # Coolify Configuration
+    COOLIFY_BASE_URL = os.getenv('COOLIFY_BASE_URL', 'http://coolify:9000')
+    COOLIFY_API_TOKEN = os.getenv('COOLIFY_API_TOKEN', '')
+    COOLIFY_AUTO_CLEANUP_HOURS = int(os.getenv('COOLIFY_AUTO_CLEANUP_HOURS', '24'))
 
 
 class DevelopmentConfig(Config):

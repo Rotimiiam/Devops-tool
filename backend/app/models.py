@@ -158,3 +158,73 @@ class Domain(db.Model):
     
     # Relationships
     subdomains = db.relationship('Domain', backref=db.backref('parent', remote_side=[id]), lazy=True)
+
+
+class SSHKey(db.Model):
+    """SSH Key model for deployment access"""
+    __tablename__ = 'ssh_keys'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    name = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text)
+    
+    # SSH key data (encrypted)
+    public_key = db.Column(db.Text, nullable=False)
+    private_key = db.Column(db.Text, nullable=False)  # Should be encrypted in production
+    fingerprint = db.Column(db.String(255), nullable=False)
+    
+    # Deployment information
+    deployed_to = db.Column(db.JSON)  # List of servers where this key is deployed
+    
+    # Metadata
+    key_type = db.Column(db.String(50), default='rsa')  # rsa, ed25519, etc.
+    key_size = db.Column(db.Integer, default=4096)
+    
+    active = db.Column(db.Boolean, default=True)
+    last_used = db.Column(db.DateTime)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = db.relationship('User', backref=db.backref('ssh_keys', lazy=True, cascade='all, delete-orphan'))
+
+
+class CoolifyDeployment(db.Model):
+    """Coolify deployment model for test deployments"""
+    __tablename__ = 'coolify_deployments'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    pipeline_id = db.Column(db.Integer, db.ForeignKey('pipelines.id'), nullable=False)
+    
+    # Coolify-specific identifiers
+    coolify_deployment_id = db.Column(db.String(255), nullable=False, unique=True)
+    coolify_application_id = db.Column(db.String(255))
+    
+    # Deployment status
+    status = db.Column(db.String(50), default='pending')  # pending, building, deploying, running, failed, stopped
+    
+    # Deployment configuration
+    application_name = db.Column(db.String(255), nullable=False)
+    docker_image = db.Column(db.String(500))
+    dockerfile_path = db.Column(db.String(500))
+    environment_variables = db.Column(db.JSON)  # {var_name: var_value}
+    port_mappings = db.Column(db.JSON)  # [{container_port: int, host_port: int}]
+    
+    # Deployment URLs
+    deployment_url = db.Column(db.String(500))
+    
+    # Logs and metadata
+    build_logs = db.Column(db.Text)
+    runtime_logs = db.Column(db.Text)
+    error_message = db.Column(db.Text)
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    cleaned_at = db.Column(db.DateTime)
+    
+    # Relationships
+    pipeline = db.relationship('Pipeline', backref=db.backref('coolify_deployments', lazy=True, cascade='all, delete-orphan'))

@@ -260,3 +260,115 @@ code {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+
+.button-small {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+
+.button-info {
+  background-color: #17a2b8;
+}
+
+.button-info:hover {
+  background-color: #138496;
+}
+
+.button-warning {
+  background-color: #ffc107;
+  color: #000;
+}
+
+.button-warning:hover {
+  background-color: #e0a800;
+}
+
+/* Coolify Deployments Styles */
+.deployments-list {
+  margin-top: 1rem;
+}
+
+.deployment-item {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.deployment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.deployment-details {
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+  color: #6c757d;
+}
+
+.deployment-details a {
+  color: #0052cc;
+  text-decoration: none;
+  display: inline-block;
+  margin-top: 0.25rem;
+}
+
+.deployment-details a:hover {
+  text-decoration: underline;
+}
+
+.logs-container {
+  margin-top: 1rem;
+  border-top: 1px solid #dee2e6;
+  padding-top: 1rem;
+}
+
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.logs-header h5 {
+  margin: 0;
+  color: #172b4d;
+}
+
+.logs-header h6 {
+  margin: 0.5rem 0 0.25rem 0;
+  color: #495057;
+  font-size: 0.875rem;
+}
+
+.logs-block {
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 0.875rem;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #333;
+}
+
+.status-building {
+  background-color: #17a2b8;
+  color: white;
+}
+
+.status-deploying {
+  background-color: #007bff;
+  color: white;
+}
+
+.status-running {
+  background-color: #28a745;
+  color: white;
+}
+
+.status-stopped {
+  background-color: #6c757d;
+  color: white;
+}

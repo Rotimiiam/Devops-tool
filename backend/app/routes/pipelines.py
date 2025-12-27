@@ -328,7 +328,16 @@ def regenerate_pipeline(pipeline_id):
 
 @bp.route('/<int:pipeline_id>/trigger', methods=['POST'])
 def trigger_pipeline_execution(pipeline_id):
-    """Manually trigger pipeline execution via Bitbucket API"""
+    """
+    Manually trigger pipeline execution via Bitbucket API with retry mechanism
+    
+    Request body:
+    {
+        "branch": "main",  // optional, default: "main"
+        "retry": true,     // optional, enable retry mechanism
+        "max_retries": 3   // optional, default: 3
+    }
+    """
     user = get_current_user()
     if not user or not user.bitbucket_token:
         return jsonify({'error': 'Not authenticated with Bitbucket'}), 401
@@ -344,53 +353,111 @@ def trigger_pipeline_execution(pipeline_id):
     
     data = request.json or {}
     branch = data.get('branch', 'main')
+    enable_retry = data.get('retry', True)
+    max_retries = data.get('max_retries', 3)
     
-    try:
-        # Trigger pipeline via Bitbucket API
-        bitbucket_service = BitbucketService(user.bitbucket_token)
-        result = bitbucket_service.trigger_pipeline(
-            workspace=repository.bitbucket_workspace,
-            repo_slug=repository.name,
-            branch=branch
-        )
-        
-        # Create execution record
-        execution = PipelineExecution(
-            pipeline_id=pipeline.id,
-            status='BUILDING',
-            trigger_type='manual',
-            bitbucket_build_number=result['build_number'],
-            bitbucket_pipeline_uuid=result['uuid'],
-            started_at=datetime.utcnow()
-        )
-        db.session.add(execution)
-        
-        # Update pipeline status
-        pipeline.status = 'BUILDING'
-        pipeline.bitbucket_pipeline_uuid = result['uuid']
-        pipeline.last_execution_timestamp = datetime.utcnow()
-        
-        db.session.commit()
-        
-        return jsonify({
-            'message': 'Pipeline triggered successfully',
-            'execution': {
-                'id': execution.id,
-                'build_number': result['build_number'],
-                'uuid': result['uuid'],
-                'status': execution.status,
-                'started_at': execution.started_at.isoformat()
-            }
-        }), 200
-        
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+    bitbucket_service = BitbucketService(user.bitbucket_token)
+    
+    # Retry logic with exponential backoff
+    import time
+    retry_count = 0
+    last_error = None
+    
+    while retry_count <= (max_retries if enable_retry else 0):
+        try:
+            # Trigger pipeline via Bitbucket API
+            result = bitbucket_service.trigger_pipeline(
+                workspace=repository.bitbucket_workspace,
+                repo_slug=repository.name,
+                branch=branch
+            )
+            
+            # Create execution record
+            execution = PipelineExecution(
+                pipeline_id=pipeline.id,
+                status='BUILDING',
+                trigger_type='manual',
+                bitbucket_build_number=result['build_number'],
+                bitbucket_pipeline_uuid=result['uuid'],
+                started_at=datetime.utcnow()
+            )
+            db.session.add(execution)
+            
+            # Update pipeline status
+            pipeline.status = 'BUILDING'
+            pipeline.bitbucket_pipeline_uuid = result['uuid']
+            pipeline.last_execution_timestamp = datetime.utcnow()
+            
+            db.session.commit()
+            
+            return jsonify({
+                'message': 'Pipeline triggered successfully',
+                'execution': {
+                    'id': execution.id,
+                    'build_number': result['build_number'],
+                    'uuid': result['uuid'],
+                    'status': execution.status,
+                    'started_at': execution.started_at.isoformat(),
+                    'retry_count': retry_count
+                }
+            }), 200
+            
+        except Exception as e:
+            last_error = str(e)
+            retry_count += 1
+            
+            if retry_count <= max_retries and enable_retry:
+                # Exponential backoff: 2^retry_count seconds
+                wait_time = 2 ** retry_count
+                print(f"Pipeline trigger failed (attempt {retry_count}/{max_retries + 1}). Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                # All retries exhausted or retry disabled
+                db.session.rollback()
+                
+                # Log the failed attempt
+                execution = PipelineExecution(
+                    pipeline_id=pipeline.id,
+                    status='FAILED',
+                    trigger_type='manual',
+                    error_message=f"Failed to trigger pipeline after {retry_count} attempts: {last_error}",
+                    started_at=datetime.utcnow(),
+                    completed_at=datetime.utcnow()
+                )
+                db.session.add(execution)
+                
+                pipeline.status = 'FAILED'
+                pipeline.error_message = last_error
+                
+                try:
+                    db.session.commit()
+                except:
+                    db.session.rollback()
+                
+                return jsonify({
+                    'error': last_error,
+                    'retry_count': retry_count - 1,
+                    'message': f'Failed to trigger pipeline after {retry_count} attempts'
+                }), 500
+    
+    # Should not reach here, but just in case
+    return jsonify({'error': 'Unexpected error in pipeline trigger'}), 500
 
 
 @bp.route('/<int:pipeline_id>/logs', methods=['GET'])
 def get_pipeline_logs(pipeline_id):
-    """Get pipeline execution logs from Bitbucket"""
+    """
+    Get pipeline execution logs from Bitbucket with filtering and pagination
+    
+    Query parameters:
+    - execution_id: Specific execution ID (optional, uses latest if not provided)
+    - page: Page number for pagination (default: 1)
+    - per_page: Items per page (default: 10, max: 50)
+    - status: Filter by execution status (BUILDING, TESTING, DEPLOYING, SUCCESS, FAILED)
+    - from_date: Filter executions from date (ISO format)
+    - to_date: Filter executions to date (ISO format)
+    - step_filter: Filter logs by step name (partial match)
+    """
     user = get_current_user()
     if not user or not user.bitbucket_token:
         return jsonify({'error': 'Not authenticated with Bitbucket'}), 401
@@ -401,20 +468,62 @@ def get_pipeline_logs(pipeline_id):
     
     repository = pipeline.repository
     
-    # Get execution_id if provided, otherwise use latest
+    # Get query parameters
     execution_id = request.args.get('execution_id', type=int)
+    page = request.args.get('page', 1, type=int)
+    per_page = min(request.args.get('per_page', 10, type=int), 50)
+    status_filter = request.args.get('status')
+    from_date = request.args.get('from_date')
+    to_date = request.args.get('to_date')
+    step_filter = request.args.get('step_filter', '').lower()
     
     if execution_id:
+        # Get specific execution
         execution = PipelineExecution.query.get(execution_id)
         if not execution or execution.pipeline_id != pipeline.id:
             return jsonify({'error': 'Execution not found'}), 404
-    else:
-        # Get latest execution
-        execution = PipelineExecution.query.filter_by(pipeline_id=pipeline.id)\
-            .order_by(PipelineExecution.started_at.desc()).first()
         
-        if not execution:
-            return jsonify({'error': 'No executions found'}), 404
+        executions = [execution]
+        total_executions = 1
+    else:
+        # Build query for historical executions
+        query = PipelineExecution.query.filter_by(pipeline_id=pipeline.id)
+        
+        # Apply filters
+        if status_filter:
+            query = query.filter_by(status=status_filter)
+        
+        if from_date:
+            try:
+                from datetime import datetime as dt
+                from_dt = dt.fromisoformat(from_date.replace('Z', '+00:00'))
+                query = query.filter(PipelineExecution.started_at >= from_dt)
+            except ValueError:
+                return jsonify({'error': 'Invalid from_date format. Use ISO format.'}), 400
+        
+        if to_date:
+            try:
+                from datetime import datetime as dt
+                to_dt = dt.fromisoformat(to_date.replace('Z', '+00:00'))
+                query = query.filter(PipelineExecution.started_at <= to_dt)
+            except ValueError:
+                return jsonify({'error': 'Invalid to_date format. Use ISO format.'}), 400
+        
+        # Order by start time (newest first)
+        query = query.order_by(PipelineExecution.started_at.desc())
+        
+        # Get total count
+        total_executions = query.count()
+        
+        # Apply pagination
+        offset = (page - 1) * per_page
+        executions = query.limit(per_page).offset(offset).all()
+    
+    if not executions:
+        return jsonify({'error': 'No executions found'}), 404
+    
+    # Process the first/selected execution
+    execution = executions[0]
     
     try:
         bitbucket_service = BitbucketService(user.bitbucket_token)
@@ -430,8 +539,17 @@ def get_pipeline_logs(pipeline_id):
             # Update execution with latest data
             execution.status = logs_data['state']
             if logs_data.get('completed_on'):
-                execution.completed_at = datetime.fromisoformat(logs_data['completed_on'].replace('Z', '+00:00'))
+                from datetime import datetime as dt
+                execution.completed_at = dt.fromisoformat(logs_data['completed_on'].replace('Z', '+00:00'))
             execution.duration_seconds = logs_data.get('duration_in_seconds')
+            
+            # Filter steps if step_filter is provided
+            steps = logs_data['steps']
+            if step_filter:
+                steps = [
+                    step for step in steps 
+                    if step_filter in step['name'].lower()
+                ]
             
             # Store logs
             full_log = '\n\n'.join([
@@ -442,24 +560,66 @@ def get_pipeline_logs(pipeline_id):
             
             db.session.commit()
             
-            return jsonify({
-                'execution_id': execution.id,
-                'build_number': logs_data['build_number'],
-                'uuid': logs_data['uuid'],
-                'status': logs_data['state'],
-                'started_at': logs_data['created_on'],
-                'completed_at': logs_data.get('completed_on'),
-                'duration_seconds': logs_data.get('duration_in_seconds'),
-                'steps': logs_data['steps']
-            }), 200
+            # Build response
+            response = {
+                'execution': {
+                    'id': execution.id,
+                    'build_number': logs_data['build_number'],
+                    'uuid': logs_data['uuid'],
+                    'status': logs_data['state'],
+                    'started_at': logs_data['created_on'],
+                    'completed_at': logs_data.get('completed_on'),
+                    'duration_seconds': logs_data.get('duration_in_seconds'),
+                    'trigger_type': execution.trigger_type
+                },
+                'steps': steps
+            }
+            
+            # Add pagination info if listing multiple executions
+            if not execution_id:
+                response['pagination'] = {
+                    'page': page,
+                    'per_page': per_page,
+                    'total': total_executions,
+                    'pages': (total_executions + per_page - 1) // per_page
+                }
+                
+                # Add summary of all executions in current page
+                response['executions_summary'] = [{
+                    'id': ex.id,
+                    'status': ex.status,
+                    'build_number': ex.bitbucket_build_number,
+                    'started_at': ex.started_at.isoformat() if ex.started_at else None,
+                    'completed_at': ex.completed_at.isoformat() if ex.completed_at else None,
+                    'duration_seconds': ex.duration_seconds,
+                    'trigger_type': ex.trigger_type
+                } for ex in executions]
+            
+            return jsonify(response), 200
         else:
             # Return stored logs if available
-            return jsonify({
-                'execution_id': execution.id,
-                'status': execution.status,
+            response = {
+                'execution': {
+                    'id': execution.id,
+                    'status': execution.status,
+                    'started_at': execution.started_at.isoformat() if execution.started_at else None,
+                    'completed_at': execution.completed_at.isoformat() if execution.completed_at else None,
+                    'duration_seconds': execution.duration_seconds,
+                    'trigger_type': execution.trigger_type
+                },
                 'logs': execution.logs or 'No logs available',
                 'error_message': execution.error_message
-            }), 200
+            }
+            
+            if not execution_id:
+                response['pagination'] = {
+                    'page': page,
+                    'per_page': per_page,
+                    'total': total_executions,
+                    'pages': (total_executions + per_page - 1) // per_page
+                }
+            
+            return jsonify(response), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -724,18 +884,24 @@ def iterate_pipeline():
         return jsonify({'error': str(e)}), 500
 
 
-@bp.route('/create-pr', methods=['POST'])
-def create_pull_request():
-    """Create a pull request with the working pipeline configuration"""
+@bp.route('/<int:pipeline_id>/create-pr', methods=['POST'])
+def create_pull_request(pipeline_id):
+    """
+    Create a pull request with the working pipeline configuration
+    
+    Request body:
+    {
+        "title": "Custom PR title",  // optional
+        "description": "Custom description",  // optional
+        "branch_name": "custom-branch-name",  // optional
+        "include_nginx_config": true  // optional, default: false
+    }
+    """
     user = get_current_user()
     if not user or not user.bitbucket_token:
         return jsonify({'error': 'Not authenticated with Bitbucket'}), 401
     
-    data = request.json
-    pipeline_id = data.get('pipeline_id')
-    
-    if not pipeline_id:
-        return jsonify({'error': 'pipeline_id is required'}), 400
+    data = request.json or {}
     
     pipeline = Pipeline.query.get(pipeline_id)
     if not pipeline or pipeline.repository.user_id != user.id:
@@ -747,15 +913,124 @@ def create_pull_request():
     if pipeline.pr_created:
         return jsonify({'error': 'PR already created for this pipeline', 'pr_url': pipeline.pr_url}), 400
     
+    repository = pipeline.repository
+    
     try:
+        # Generate commit message based on pipeline configuration
+        detected_techs = []
+        if repository.detected_languages:
+            langs = ', '.join(repository.detected_languages.keys())
+            detected_techs.append(f"Languages: {langs}")
+        if repository.detected_frameworks:
+            frameworks = ', '.join(repository.detected_frameworks.keys())
+            detected_techs.append(f"Frameworks: {frameworks}")
+        
+        tech_summary = ' | '.join(detected_techs) if detected_techs else 'Multiple technologies'
+        
+        # Build commit message
+        commit_message = data.get('commit_message', 
+            f"""Add automated CI/CD pipeline configuration
+
+Pipeline Version: {pipeline.version}
+Status: {pipeline.status}
+Technologies: {tech_summary}
+
+This pipeline configuration was automatically generated and tested.
+"""
+        )
+        
+        # Build PR title
+        pr_title = data.get('title',
+            f"Add CI/CD Pipeline Configuration (v{pipeline.version}) - {tech_summary}"
+        )
+        
+        # Build detailed PR description
+        config_details = []
+        if pipeline.deployment_server:
+            config_details.append(f"- **Deployment Server**: {pipeline.deployment_server}")
+        if pipeline.subdomain:
+            config_details.append(f"- **Subdomain**: {pipeline.subdomain}")
+        if pipeline.port:
+            config_details.append(f"- **Port**: {pipeline.port}")
+        if pipeline.server_ip:
+            config_details.append(f"- **Server IP**: {pipeline.server_ip}")
+        if pipeline.ssl_enabled:
+            config_details.append(f"- **SSL**: Enabled")
+        if pipeline.environment_variables:
+            env_count = len(pipeline.environment_variables)
+            config_details.append(f"- **Environment Variables**: {env_count} configured")
+        
+        config_summary = '\n'.join(config_details) if config_details else 'Standard configuration'
+        
+        execution_history = PipelineExecution.query.filter_by(
+            pipeline_id=pipeline.id
+        ).order_by(PipelineExecution.started_at.desc()).limit(5).all()
+        
+        execution_summary = ""
+        if execution_history:
+            execution_summary = "\n\n## Test Execution History\n\n"
+            for ex in execution_history:
+                status_emoji = "✅" if ex.status in ['SUCCESS', 'COMPLETED'] else "❌"
+                execution_summary += f"- {status_emoji} Build #{ex.bitbucket_build_number or 'N/A'} - {ex.status} "
+                if ex.duration_seconds:
+                    execution_summary += f"({ex.duration_seconds}s)"
+                execution_summary += f" - {ex.started_at.strftime('%Y-%m-%d %H:%M:%S') if ex.started_at else 'N/A'}\n"
+        
+        pr_description = data.get('description',
+            f"""## Automated CI/CD Pipeline Configuration
+
+This pull request adds a fully tested Bitbucket Pipelines configuration for automated CI/CD.
+
+### Pipeline Details
+
+**Version**: {pipeline.version}
+**Status**: {pipeline.status}
+**Generated**: {pipeline.created_at.strftime('%Y-%m-%d %H:%M:%S') if pipeline.created_at else 'N/A'}
+**Last Updated**: {pipeline.updated_at.strftime('%Y-%m-%d %H:%M:%S') if pipeline.updated_at else 'N/A'}
+
+### Detected Technologies
+
+{tech_summary}
+
+### Deployment Configuration
+
+{config_summary}
+{execution_summary}
+
+### What's Included
+
+- ✅ Automated build and test steps
+- ✅ Deployment to configured server
+- ✅ Environment variable configuration
+{"- ✅ Nginx reverse proxy configuration" if pipeline.nginx_config and data.get('include_nginx_config') else ""}
+
+### Next Steps
+
+1. Review the pipeline configuration
+2. Merge this PR to enable automated deployments
+3. Configure any additional environment variables in Bitbucket repository settings
+4. Monitor the first deployment run
+
+---
+
+*This PR was automatically generated and tested by the DevOps Tool.*
+"""
+        )
+        
         bitbucket_service = BitbucketService(user.bitbucket_token)
+        
+        # Custom branch name or default
+        branch_name = data.get('branch_name', f'pipeline-v{pipeline.version}-{int(datetime.utcnow().timestamp())}')
         
         # Create branch and commit pipeline configuration
         pr_url = bitbucket_service.create_pipeline_pr(
-            workspace=pipeline.repository.bitbucket_workspace,
-            repo_slug=pipeline.repository.name,
+            workspace=repository.bitbucket_workspace,
+            repo_slug=repository.name,
             pipeline_config=pipeline.config,
-            branch_name=f'add-pipeline-v{pipeline.version}'
+            branch_name=branch_name,
+            commit_message=commit_message,
+            pr_title=pr_title,
+            pr_description=pr_description
         )
         
         pipeline.pr_created = True
@@ -764,7 +1039,9 @@ def create_pull_request():
         
         return jsonify({
             'message': 'Pull request created successfully',
-            'pr_url': pr_url
+            'pr_url': pr_url,
+            'branch_name': branch_name,
+            'pr_title': pr_title
         }), 201
         
     except Exception as e:

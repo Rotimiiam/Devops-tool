@@ -16,6 +16,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
@@ -26,6 +31,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     build:
@@ -45,8 +55,12 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-http://launchpad.crl.to}
       - REDIS_URL=redis://redis:6379/0
       - FLASK_ENV=${FLASK_ENV:-production}
+      - COOLIFY_BASE_URL=${COOLIFY_BASE_URL:-http://coolify}
+      - COOLIFY_API_TOKEN=${COOLIFY_API_TOKEN}
+      - COOLIFY_AUTO_CLEANUP_HOURS=${COOLIFY_AUTO_CLEANUP_HOURS:-24}
+      - POSTGRES_USER=${POSTGRES_USER:-devops}
     ports:
-      - "5080:5000"
+      - "5088:5000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backend:/app
@@ -57,22 +71,187 @@ services:
         condition: service_healthy
     networks:
       - devops-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.tasks.celery worker --loglevel=info
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-devops}:${POSTGRES_PASSWORD:-devops}@db:5432/${POSTGRES_DB:-devops_tool}
+      - REDIS_URL=redis://redis:6379/0
+      - COOLIFY_BASE_URL=${COOLIFY_BASE_URL:-http://coolify}
+      - COOLIFY_API_TOKEN=${COOLIFY_API_TOKEN}
+      - COOLIFY_AUTO_CLEANUP_HOURS=${COOLIFY_AUTO_CLEANUP_HOURS:-24}
+      - POSTGRES_USER=${POSTGRES_USER:-devops}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - devops-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.tasks.celery beat --loglevel=info
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-devops}:${POSTGRES_PASSWORD:-devops}@db:5432/${POSTGRES_DB:-devops_tool}
+      - REDIS_URL=redis://redis:6379/0
+      - COOLIFY_BASE_URL=${COOLIFY_BASE_URL:-http://coolify}
+      - COOLIFY_API_TOKEN=${COOLIFY_API_TOKEN}
+      - COOLIFY_AUTO_CLEANUP_HOURS=${COOLIFY_AUTO_CLEANUP_HOURS:-24}
+      - POSTGRES_USER=${POSTGRES_USER:-devops}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - devops-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "8080:80"
+      - "8088:80"
     environment:
       - REACT_APP_API_URL=${REACT_APP_API_URL:-http://launchpad.crl.to/api}
     depends_on:
       - backend
     networks:
       - devops-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  coolify:
+    image: ghcr.io/coollabsio/coolify:latest
+    environment:
+      - APP_URL=${COOLIFY_URL:-http://localhost:9000}
+      - APP_KEY=${COOLIFY_APP_KEY:-base64:random-key-change-in-production}
+      - DB_HOST=coolify-db
+      - DB_PORT=5432
+      - DB_DATABASE=coolify
+      - DB_USERNAME=coolify
+      - DB_PASSWORD=${COOLIFY_DB_PASSWORD:-coolify}
+      - REDIS_HOST=coolify-redis
+      - REDIS_PORT=6379
+    ports:
+      - "9000:80"
+      - "9001:9001"
+      - "9002:9002"
+      - "9003:9003"
+      - "9004:9004"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - coolify_data:/data
+    depends_on:
+      coolify-db:
+        condition: service_healthy
+      coolify-redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  coolify-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: coolify
+      POSTGRES_PASSWORD: ${COOLIFY_DB_PASSWORD:-coolify}
+      POSTGRES_DB: coolify
+    volumes:
+      - coolify_postgres_data:/var/lib/postgresql/data
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coolify"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  coolify-redis:
+    image: redis:7-alpine
+    networks:
+      - devops-network
+    volumes:
+      - coolify_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:
+  coolify_data:
+  coolify_postgres_data:
+  coolify_redis_data:
 
 networks:
   devops-network:

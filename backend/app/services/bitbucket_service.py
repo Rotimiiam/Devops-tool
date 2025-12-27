@@ -102,8 +102,20 @@ class BitbucketService:
             except subprocess.CalledProcessError as e:
                 raise Exception(f'Failed to mirror repository: {e.stderr.decode()}')
     
-    def create_pipeline_pr(self, workspace, repo_slug, pipeline_config, branch_name='add-pipeline'):
-        """Create a pull request with pipeline configuration"""
+    def create_pipeline_pr(self, workspace, repo_slug, pipeline_config, branch_name='add-pipeline', 
+                          commit_message=None, pr_title=None, pr_description=None):
+        """
+        Create a pull request with pipeline configuration
+        
+        Args:
+            workspace: Bitbucket workspace slug
+            repo_slug: Repository slug
+            pipeline_config: Pipeline YAML configuration
+            branch_name: Branch name for the PR
+            commit_message: Custom commit message
+            pr_title: Custom PR title
+            pr_description: Custom PR description
+        """
         # First, create a new branch
         branch_url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/refs/branches'
         
@@ -126,9 +138,12 @@ class BitbucketService:
         # Commit pipeline file
         file_url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/src'
         
+        # Use custom commit message or default
+        commit_msg = commit_message or 'Add Bitbucket pipeline configuration'
+        
         files = {
             'bitbucket-pipelines.yml': pipeline_config,
-            'message': 'Add Bitbucket pipeline configuration',
+            'message': commit_msg,
             'branch': branch_name
         }
         
@@ -140,9 +155,13 @@ class BitbucketService:
         # Create pull request
         pr_url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/pullrequests'
         
+        # Use custom title and description or defaults
+        pr_title_final = pr_title or 'Add Bitbucket Pipeline Configuration'
+        pr_description_final = pr_description or 'This PR adds a working Bitbucket pipeline configuration generated and tested automatically.'
+        
         pr_payload = {
-            'title': 'Add Bitbucket Pipeline Configuration',
-            'description': 'This PR adds a working Bitbucket pipeline configuration generated and tested automatically.',
+            'title': pr_title_final,
+            'description': pr_description_final,
             'source': {
                 'branch': {
                     'name': branch_name
