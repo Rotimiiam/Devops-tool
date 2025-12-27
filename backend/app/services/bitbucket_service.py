@@ -159,3 +159,152 @@ class BitbucketService:
         pr_response.raise_for_status()
         
         return pr_response.json()['links']['html']['href']
+    
+    def trigger_pipeline(self, workspace, repo_slug, branch='main'):
+        """Trigger a pipeline run for a repository"""
+        url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/pipelines/'
+        
+        payload = {
+            'target': {
+                'ref_type': 'branch',
+                'type': 'pipeline_ref_target',
+                'ref_name': branch
+            }
+        }
+        
+        response = requests.post(url, json=payload, headers=self.headers)
+        response.raise_for_status()
+        
+        pipeline_data = response.json()
+        return {
+            'uuid': pipeline_data['uuid'],
+            'build_number': pipeline_data['build_number'],
+            'state': pipeline_data['state']['name'],
+            'created_on': pipeline_data['created_on']
+        }
+    
+    def get_pipeline_runs(self, workspace, repo_slug, limit=10):
+        """Get recent pipeline runs for a repository"""
+        url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/pipelines/'
+        params = {'pagelen': limit, 'sort': '-created_on'}
+        
+        response = requests.get(url, headers=self.headers, params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        runs = []
+        
+        for pipeline in data.get('values', []):
+            runs.append({
+                'uuid': pipeline['uuid'],
+                'build_number': pipeline['build_number'],
+                'state': pipeline['state']['name'],
+                'created_on': pipeline['created_on'],
+                'completed_on': pipeline.get('completed_on'),
+                'duration_in_seconds': pipeline.get('duration_in_seconds'),
+                'trigger': pipeline.get('trigger', {}).get('name', 'unknown')
+            })
+        
+        return runs
+    
+    def get_pipeline_logs(self, workspace, repo_slug, pipeline_uuid):
+        """Get logs for a specific pipeline run"""
+        url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/pipelines/{pipeline_uuid}'
+        
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        
+        pipeline_data = response.json()
+        
+        # Get steps
+        steps_url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/pipelines/{pipeline_uuid}/steps/'
+        steps_response = requests.get(steps_url, headers=self.headers)
+        steps_response.raise_for_status()
+        
+        steps_data = steps_response.json()
+        logs = []
+        
+        for step in steps_data.get('values', []):
+            step_info = {
+                'name': step.get('name'),
+                'state': step['state']['name'],
+                'started_on': step.get('started_on'),
+                'completed_on': step.get('completed_on'),
+                'duration_in_seconds': step.get('duration_in_seconds'),
+                'log': None
+            }
+            
+            # Get step log
+            if 'log' in step.get('links', {}):
+                log_url = step['links']['log']['href']
+                try:
+                    log_response = requests.get(log_url, headers=self.headers)
+                    log_response.raise_for_status()
+                    step_info['log'] = log_response.text
+                except:
+                    step_info['log'] = 'Log unavailable'
+            
+            logs.append(step_info)
+        
+        return {
+            'uuid': pipeline_data['uuid'],
+            'build_number': pipeline_data['build_number'],
+            'state': pipeline_data['state']['name'],
+            'created_on': pipeline_data['created_on'],
+            'completed_on': pipeline_data.get('completed_on'),
+            'duration_in_seconds': pipeline_data.get('duration_in_seconds'),
+            'steps': logs
+        }
+    
+    def sync_environment_variables(self, workspace, repo_slug, environment_variables):
+        """Sync environment variables to Bitbucket repository variables"""
+        url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/pipelines_config/variables/'
+        
+        # Get existing variables
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        
+        existing_vars = {var['key']: var['uuid'] for var in response.json().get('values', [])}
+        
+        synced_vars = []
+        errors = []
+        
+        for key, value in environment_variables.items():
+            try:
+                if key in existing_vars:
+                    # Update existing variable
+                    var_url = f'{url}{existing_vars[key]}'
+                    payload = {'key': key, 'value': value, 'secured': True}
+                    update_response = requests.put(var_url, json=payload, headers=self.headers)
+                    update_response.raise_for_status()
+                    synced_vars.append({'key': key, 'action': 'updated'})
+                else:
+                    # Create new variable
+                    payload = {'key': key, 'value': value, 'secured': True}
+                    create_response = requests.post(url, json=payload, headers=self.headers)
+                    create_response.raise_for_status()
+                    synced_vars.append({'key': key, 'action': 'created'})
+            except Exception as e:
+                errors.append({'key': key, 'error': str(e)})
+        
+        return {
+            'synced': synced_vars,
+            'errors': errors
+        }
+    
+    def get_repository_variables(self, workspace, repo_slug):
+        """Get all repository pipeline variables"""
+        url = f'{self.base_url}/repositories/{workspace}/{repo_slug}/pipelines_config/variables/'
+        
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        
+        variables = []
+        for var in response.json().get('values', []):
+            variables.append({
+                'key': var['key'],
+                'secured': var.get('secured', False),
+                'uuid': var['uuid']
+            })
+        
+        return variables
