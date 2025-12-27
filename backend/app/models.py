@@ -47,6 +47,14 @@ class Repository(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Analysis fields
+    detected_languages = db.Column(db.JSON)  # {language: {count: int, confidence: float}}
+    detected_frameworks = db.Column(db.JSON)  # {framework: {version: str, confidence: float}}
+    required_env_vars = db.Column(db.JSON)  # {var_name: {source_files: [], confidence: float}}
+    analysis_confidence = db.Column(db.Float)  # Overall confidence score 0-100
+    analysis_timestamp = db.Column(db.DateTime)
+    ai_recommendations = db.Column(db.Text)  # AI-generated recommendations
+    
     # Relationships
     pipelines = db.relationship('Pipeline', backref='repository', lazy=True, cascade='all, delete-orphan')
 
